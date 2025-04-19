@@ -40,6 +40,13 @@ function createWindow() {
 const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 
+// Pomocnicza funkcja do prezentacji ceny
+function formatPrice(val) {
+    if (val === null || val === undefined) return "-";
+    if (val === 0) return "FREE";
+    return `${val} zł`;
+}
+
 async function fetchGameData(url) {
     try {
         const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -47,21 +54,25 @@ async function fetchGameData(url) {
         const html = await res.text();
         const $ = cheerio.load(html);
 
-        // Nazwa gry
         const name = $('h1').first().text().trim() || 'Nieznana gra';
 
-        // Szukaj wszystkich boxów cenowych
         let official = null;
         let keyshop = null;
 
         $('.game-header-price-box').each((i, el) => {
             const label = $(el).find('.game-info-price-label').text().toLowerCase();
-            const priceText = $(el).find('.price-inner.numeric').text();
-            const price = parseFloat(priceText.replace(/[^\d,\.]/g, '').replace(',', '.'));
-            if (/official/.test(label) && official === null && !isNaN(price)) {
+            const priceText = $(el).find('.price-inner.numeric').text().trim();
+            let price = null;
+            if (/free/i.test(priceText)) {
+                price = 0;
+            } else {
+                price = parseFloat(priceText.replace(/[^\d,\.]/g, '').replace(',', '.'));
+                if (isNaN(price)) price = null;
+            }
+            if (/official/.test(label) && official === null) {
                 official = price;
             }
-            if (/keyshop/.test(label) && keyshop === null && !isNaN(price)) {
+            if (/keyshop/.test(label) && keyshop === null) {
                 keyshop = price;
             }
         });
@@ -72,36 +83,70 @@ async function fetchGameData(url) {
     }
 }
 
-function checkThresholdAndNotify(game) {
-    if (!game.threshold || game.threshold === "" || game.notified) return;
-    const threshold = Number(game.threshold);
-    let notify = false;
-    let price = null;
-    if (game.official && game.official <= threshold) {
-        notify = true;
-        price = game.official;
+function notifyPriceChange(game, oldOfficial, newOfficial, oldKeyshop, newKeyshop) {
+    let msg = '';
+    if (oldOfficial !== undefined && newOfficial !== undefined && oldOfficial !== newOfficial) {
+        msg += `Oficjalny sklep: z ${formatPrice(oldOfficial)} na ${formatPrice(newOfficial)}\n`;
     }
-    if (game.keyshop && game.keyshop <= threshold && (price === null || game.keyshop < price)) {
-        notify = true;
-        price = game.keyshop;
+    if (oldKeyshop !== undefined && newKeyshop !== undefined && oldKeyshop !== newKeyshop) {
+        msg += `Keyshop: z ${formatPrice(oldKeyshop)} na ${formatPrice(newKeyshop)}\n`;
     }
-    if (notify) {
+    if (msg.trim() !== '') {
         new Notification({
-            title: 'Cena gry spadła!',
-            body: `${game.name} jest teraz za ${price} zł!`
+            title: `Zmiana ceny gry: ${game.name}`,
+            body: msg.trim()
         }).show();
-        game.notified = true;
-        saveGamesToFile();
+    }
+}
+
+function notifyBelowThreshold(game, price, typ) {
+    new Notification({
+        title: 'Cena gry spadła poniżej progu!',
+        body: `${game.name} (${typ}) jest teraz za ${formatPrice(price)} (próg: ${formatPrice(game.threshold)})`
+    }).show();
+}
+
+function checkAndNotify(game, newOfficial, newKeyshop, oldOfficial, oldKeyshop) {
+    // Powiadomienie o każdej zmianie ceny (niezależnie od progu)
+    notifyPriceChange(game, oldOfficial, newOfficial, oldKeyshop, newKeyshop);
+
+    // Powiadomienie o spadku poniżej progu (osobno dla official i keyshop)
+    if (game.threshold !== null && game.threshold !== undefined && game.threshold !== "") {
+        const threshold = Number(game.threshold);
+
+        // Official
+        if (
+            newOfficial !== undefined && newOfficial !== null &&
+            newOfficial <= threshold &&
+            (!game.notifiedBelowThresholdOfficial || game.notifiedBelowThresholdOfficial !== newOfficial)
+        ) {
+            notifyBelowThreshold(game, newOfficial, "Oficjalny sklep");
+            game.notifiedBelowThresholdOfficial = newOfficial;
+        }
+        // Keyshop
+        if (
+            newKeyshop !== undefined && newKeyshop !== null &&
+            newKeyshop <= threshold &&
+            (!game.notifiedBelowThresholdKeyshop || game.notifiedBelowThresholdKeyshop !== newKeyshop)
+        ) {
+            notifyBelowThreshold(game, newKeyshop, "Keyshop");
+            game.notifiedBelowThresholdKeyshop = newKeyshop;
+        }
     }
 }
 
 async function monitorLoop() {
     while (monitoring) {
         for (let game of games) {
+            const oldOfficial = game.official;
+            const oldKeyshop = game.keyshop;
             const data = await fetchGameData(game.url);
+
+            // Zaktualizuj ceny
             game.official = data.official;
             game.keyshop = data.keyshop;
-            checkThresholdAndNotify(game);
+
+            checkAndNotify(game, data.official, data.keyshop, oldOfficial, oldKeyshop);
         }
         saveGamesToFile();
         if (mainWindow && !mainWindow.isDestroyed())
@@ -114,9 +159,7 @@ async function monitorLoop() {
     }
 }
 
-// IPC handlers
 ipcMain.handle('add-game', async (event, url, threshold) => {
-    // Sprawdź, czy już jest ta gra na liście
     if (games.some(g => g.url === url)) return;
     const data = await fetchGameData(url);
     const game = {
@@ -125,9 +168,14 @@ ipcMain.handle('add-game', async (event, url, threshold) => {
         official: data.official,
         keyshop: data.keyshop,
         threshold: threshold ? Number(threshold) : null,
-        notified: false
+        notifiedBelowThresholdOfficial: null,
+        notifiedBelowThresholdKeyshop: null
     };
     games.push(game);
+
+    // Powiadomienie natychmiast po dodaniu gry
+    checkAndNotify(game, data.official, data.keyshop, undefined, undefined);
+
     saveGamesToFile();
     if (!monitoring && games.length > 0) {
         monitoring = true;
@@ -135,6 +183,18 @@ ipcMain.handle('add-game', async (event, url, threshold) => {
     }
     if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send('games', games);
+});
+
+ipcMain.handle('update-threshold', (event, idx, newThreshold) => {
+    if (idx >= 0 && idx < games.length) {
+        games[idx].threshold = newThreshold !== "" && newThreshold !== null ? Number(newThreshold) : null;
+        // Resetuj powiadomienia o progu, żeby użytkownik dostał info jeśli znów spadnie poniżej nowego progu
+        games[idx].notifiedBelowThresholdOfficial = null;
+        games[idx].notifiedBelowThresholdKeyshop = null;
+        saveGamesToFile();
+        if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('games', games);
+    }
 });
 
 ipcMain.on('remove-game', (event, idx) => {
@@ -150,7 +210,6 @@ ipcMain.on('get-games', (event) => {
     event.sender.send('games', games);
 });
 
-// App start
 app.whenReady().then(() => {
     loadGamesFromFile();
     createWindow();
