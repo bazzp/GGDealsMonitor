@@ -1,89 +1,169 @@
 const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
-const puppeteer = require('puppeteer');
+const fs = require('fs');
 
 let mainWindow;
-let lastOfficial = null;
-let lastKeyshop = null;
+let games = [];
+let monitoring = false;
+const stateFile = path.join(app.getPath('userData'), 'games.json');
+
+function saveGamesToFile() {
+    fs.writeFileSync(stateFile, JSON.stringify(games, null, 2), 'utf-8');
+}
+
+function loadGamesFromFile() {
+    if (fs.existsSync(stateFile)) {
+        try {
+            const data = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+            if (Array.isArray(data)) {
+                games = data;
+                return true;
+            }
+        } catch (e) { }
+    }
+    return false;
+}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 400,
-        height: 350,
+        width: 900,
+        height: 700,
         webPreferences: {
             nodeIntegration: true,
-            contextIsolation: false,
+            contextIsolation: false
         }
     });
 
     mainWindow.loadFile('index.html');
 }
 
-async function getPrices() {
-    const url = 'https://gg.deals/game/minecraft/';
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox']
-    });
-    const page = await browser.newPage();
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: 0 });
+const fetch = require('node-fetch');
+const cheerio = require('cheerio');
 
-    await page.waitForSelector('.header-game-prices-content .game-header-price-box:nth-child(1) .price-inner.numeric', {timeout: 20000});
-    await page.waitForSelector('.header-game-prices-content .game-header-price-box:nth-child(2) .price-inner.numeric', {timeout: 20000});
+async function fetchGameData(url) {
+    try {
+        const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (!res.ok) throw new Error("Nie udało się pobrać strony");
+        const html = await res.text();
+        const $ = cheerio.load(html);
 
-    const official = await page.$eval(
-        '.header-game-prices-content .game-header-price-box:nth-child(1) .price-inner.numeric',
-        el => el.innerText.trim()
-    );
-    const keyshop = await page.$eval(
-        '.header-game-prices-content .game-header-price-box:nth-child(2) .price-inner.numeric',
-        el => el.innerText.trim()
-    );
+        // Nazwa gry
+        const name = $('h1').first().text().trim() || 'Nieznana gra';
 
-    await browser.close();
+        // Szukaj wszystkich boxów cenowych
+        let official = null;
+        let keyshop = null;
 
-    const parsePrice = (txt) => {
-        const cleaned = txt.replace('~', '').replace('zł', '').replace(',', '.').replace(/[^\d.]/g, '');
-        return parseFloat(cleaned);
-    };
-
-    return {
-        official: parsePrice(official),
-        keyshop: parsePrice(keyshop)
-    };
-}
-
-// Monitor loop
-async function monitorPrices() {
-    while (true) {
-        try {
-            const prices = await getPrices();
-            mainWindow.webContents.send('prices', prices);
-
-            if (prices.official && lastOfficial !== prices.official) {
-                new Notification({ title: "Minecraft – GG.deals (oficjalny sklep)", body: `Najniższa cena: ${prices.official.toFixed(2)} zł` }).show();
-                lastOfficial = prices.official;
+        $('.game-header-price-box').each((i, el) => {
+            const label = $(el).find('.game-info-price-label').text().toLowerCase();
+            const priceText = $(el).find('.price-inner.numeric').text();
+            const price = parseFloat(priceText.replace(/[^\d,\.]/g, '').replace(',', '.'));
+            if (/official/.test(label) && official === null && !isNaN(price)) {
+                official = price;
             }
-            if (prices.keyshop && lastKeyshop !== prices.keyshop) {
-                new Notification({ title: "Minecraft – GG.deals (keyshop)", body: `Najniższa cena: ${prices.keyshop.toFixed(2)} zł` }).show();
-                lastKeyshop = prices.keyshop;
+            if (/keyshop/.test(label) && keyshop === null && !isNaN(price)) {
+                keyshop = price;
             }
-        } catch (e) {
-            mainWindow.webContents.send('prices', { official: null, keyshop: null, error: e.message });
-        }
-        await new Promise(res => setTimeout(res, 60 * 1000));
+        });
+
+        return { name, url, official, keyshop };
+    } catch (e) {
+        return { name: 'Błąd pobierania', url, official: null, keyshop: null };
     }
 }
 
-app.whenReady().then(() => {
-    createWindow();
-    monitorPrices();
+function checkThresholdAndNotify(game) {
+    if (!game.threshold || game.threshold === "" || game.notified) return;
+    const threshold = Number(game.threshold);
+    let notify = false;
+    let price = null;
+    if (game.official && game.official <= threshold) {
+        notify = true;
+        price = game.official;
+    }
+    if (game.keyshop && game.keyshop <= threshold && (price === null || game.keyshop < price)) {
+        notify = true;
+        price = game.keyshop;
+    }
+    if (notify) {
+        new Notification({
+            title: 'Cena gry spadła!',
+            body: `${game.name} jest teraz za ${price} zł!`
+        }).show();
+        game.notified = true;
+        saveGamesToFile();
+    }
+}
 
-    app.on('activate', function () {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow();
-    });
+async function monitorLoop() {
+    while (monitoring) {
+        for (let game of games) {
+            const data = await fetchGameData(game.url);
+            game.official = data.official;
+            game.keyshop = data.keyshop;
+            checkThresholdAndNotify(game);
+        }
+        saveGamesToFile();
+        if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('games', games);
+        if (games.length === 0) {
+            monitoring = false;
+            break;
+        }
+        await new Promise(res => setTimeout(res, 60 * 1000)); // 1 minuta
+    }
+}
+
+// IPC handlers
+ipcMain.handle('add-game', async (event, url, threshold) => {
+    // Sprawdź, czy już jest ta gra na liście
+    if (games.some(g => g.url === url)) return;
+    const data = await fetchGameData(url);
+    const game = {
+        name: data.name,
+        url: data.url,
+        official: data.official,
+        keyshop: data.keyshop,
+        threshold: threshold ? Number(threshold) : null,
+        notified: false
+    };
+    games.push(game);
+    saveGamesToFile();
+    if (!monitoring && games.length > 0) {
+        monitoring = true;
+        monitorLoop();
+    }
+    if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send('games', games);
 });
 
-app.on('window-all-closed', function () {
+ipcMain.on('remove-game', (event, idx) => {
+    if (idx >= 0 && idx < games.length) {
+        games.splice(idx, 1);
+        saveGamesToFile();
+        if (mainWindow && !mainWindow.isDestroyed())
+            mainWindow.webContents.send('games', games);
+    }
+});
+
+ipcMain.on('get-games', (event) => {
+    event.sender.send('games', games);
+});
+
+// App start
+app.whenReady().then(() => {
+    loadGamesFromFile();
+    createWindow();
+    if (games.length > 0) {
+        monitoring = true;
+        monitorLoop();
+    }
+});
+
+app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });

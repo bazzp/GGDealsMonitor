@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <title>Monitor cen gier</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<h1>Monitor cen gier</h1>
+<form class="add-form" id="addForm">
+  <input type="text" id="urlInput" placeholder="Wklej link do gry z GG.deals, np. https://gg.deals/game/minecraft/" required>
+  <input type="number" id="thresholdInput" placeholder="Próg powiadomienia (zł)">
+  <button type="submit">Dodaj</button>
+</form>
+<table id="gamesTable">
+  <thead>
+  <tr>
+    <th>Nazwa gry</th>
+    <th>Oficjalny sklep (zł)</th>
+    <th>Keyshop (zł)</th>
+    <th>Link</th>
+    <th>Próg powiadomienia (zł)</th>
+    <th style="width:40px;"></th>
+  </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+  const { ipcRenderer } = require('electron');
+
+  function updateTable(games) {
+    const tbody = document.querySelector('#gamesTable tbody');
+    tbody.innerHTML = '';
+    games.forEach((game, i) => {
+      const official = (game.official !== null && game.official !== undefined) ? game.official : '-';
+      const keyshop = (game.keyshop !== null && game.keyshop !== undefined) ? game.keyshop : '-';
+      const threshold = (game.threshold !== null && game.threshold !== undefined && game.threshold !== "") ? game.threshold : '-';
+      const row = document.createElement('tr');
+      row.innerHTML = `
+          <td>${game.name}</td>
+          <td>${official}</td>
+          <td>${keyshop}</td>
+          <td><a class="games-link" href="${game.url}" target="_blank">GG.deals</a></td>
+          <td>${threshold}</td>
+          <td>
+            <button data-index="${i}" class="remove-btn" title="Usuń">
+              🗑️
+            </button>
+          </td>
+        `;
+      tbody.appendChild(row);
+    });
+
+    // Obsługa kliknięcia usuń
+    document.querySelectorAll('.remove-btn').forEach(btn => {
+      btn.onclick = function() {
+        const idx = parseInt(this.getAttribute('data-index'));
+        ipcRenderer.send('remove-game', idx);
+      };
+    });
+  }
+
+  // Odbiór zaktualizowanej listy gier
+  ipcRenderer.on('games', (event, games) => {
+    updateTable(games);
+  });
+
+  // Dodawanie gry
+  document.getElementById('addForm').onsubmit = function(e) {
+    e.preventDefault();
+    const url = document.getElementById('urlInput').value.trim();
+    const threshold = document.getElementById('thresholdInput').value.trim();
+    if (url) {
+      ipcRenderer.invoke('add-game', url, threshold);
+      document.getElementById('urlInput').value = '';
+      document.getElementById('thresholdInput').value = '';
+    }
+  };
+
+  // Załaduj gry przy starcie
+  window.onload = function() {
+    ipcRenderer.send('get-games');
+  };
+</script>
+</body>
+</html>
