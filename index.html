@@ -117,6 +117,21 @@
     ipcRenderer.send('get-games');
   };
 
+  // Załaduj gry po starcie
+  window.addEventListener('DOMContentLoaded', () => {
+    window.electron.ipcRenderer.send('get-games');
+  });
+
+  // Opcjonalnie: po przywróceniu/skupieniu okna
+  window.addEventListener('focus', () => {
+    window.electron.ipcRenderer.send('get-games');
+  });
+
+  // Odbierz gry i zaktualizuj UI
+  window.electron.ipcRenderer.on('games', (event, games) => {
+    renderGames(games); // Twoja funkcja do wyświetlania gier w tabeli
+  });
+
   // MODAL: obsługa edycji progu
   let editIdx = null;
   document.getElementById('threshold-modal-ok').onclick = function() {

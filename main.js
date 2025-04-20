@@ -3,13 +3,16 @@ const path = require('path');
 const fs = require('fs');
 
 let mainWindow;
-let games = [];
 let monitoring = false;
 const stateFile = path.join(app.getPath('userData'), 'games.json');
-
+let games = loadGamesFromFile(); // Załaduj gry z pliku na starcie
 function saveGamesToFile() {
     fs.writeFileSync(stateFile, JSON.stringify(games, null, 2), 'utf-8');
 }
+
+ipcMain.on('get-games', (event) => {
+    event.sender.send('games', games);
+});
 
 function loadGamesFromFile() {
     if (fs.existsSync(stateFile)) {
@@ -155,7 +158,7 @@ async function monitorLoop() {
             monitoring = false;
             break;
         }
-        await new Promise(res => setTimeout(res, 60 * 1000)); // 1 minuta
+        await new Promise(res => setTimeout(res, 60 * 100)); // 1 minuta
     }
 }
 
