@@ -44,9 +44,9 @@
           <td><a class="games-link" href="${game.url}" target="_blank">GG.deals</a></td>
           <td>${threshold}</td>
           <td>
-            <button onclick="editThreshold(0)">
-            ✎
-            </button>
+           <button data-index="${i}" class="edit-btn" title="Edytuj próg">
+           ✏️
+           </button>
             <button data-index="${i}" class="remove-btn" title="Usuń">
               🗑️
             </button>
@@ -64,13 +64,17 @@
     });
   }
 
-  function editThreshold(idx) {
-    const current = document.getElementById('threshold-' + idx).innerText;
-    const newVal = prompt("Podaj nowy próg cenowy (lub zostaw puste by wyłączyć):", current);
-    if (newVal !== null) {
-      window.electron.invoke('update-threshold', idx, newVal.trim());
-    }
-  }
+  // Obsługa kliknięcia edytuj
+  document.querySelectorAll('.edit-btn').forEach(btn => {
+    btn.onclick = function() {
+      const idx = parseInt(this.getAttribute('data-index'));
+      const current = document.getElementById('threshold-' + idx).innerText;
+      const newVal = prompt("Podaj nowy próg cenowy (lub zostaw puste by wyłączyć):", current === '-' ? '' : current);
+      if (newVal !== null) {
+        ipcRenderer.invoke('edit-threshold', idx, newVal.trim());
+      }
+    };
+  });
 
   // Odbiór zaktualizowanej listy gier
   ipcRenderer.on('games', (event, games) => {

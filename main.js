@@ -185,16 +185,18 @@ ipcMain.handle('add-game', async (event, url, threshold) => {
         mainWindow.webContents.send('games', games);
 });
 
-ipcMain.handle('update-threshold', (event, idx, newThreshold) => {
+ipcMain.handle('edit-threshold', (event, idx, newThreshold) => {
     if (idx >= 0 && idx < games.length) {
-        games[idx].threshold = newThreshold !== "" && newThreshold !== null ? Number(newThreshold) : null;
-        // Resetuj powiadomienia o progu, żeby użytkownik dostał info jeśli znów spadnie poniżej nowego progu
-        games[idx].notifiedBelowThresholdOfficial = null;
-        games[idx].notifiedBelowThresholdKeyshop = null;
+        games[idx].threshold = newThreshold !== "" ? Number(newThreshold) : null;
+        games[idx].notified = false; // Reset powiadomienia o progu!
         saveGamesToFile();
         if (mainWindow && !mainWindow.isDestroyed())
             mainWindow.webContents.send('games', games);
     }
+});
+
+ipcRenderer.on('games', (event, games) => {
+    updateTable(games);
 });
 
 ipcMain.on('remove-game', (event, idx) => {
@@ -206,9 +208,7 @@ ipcMain.on('remove-game', (event, idx) => {
     }
 });
 
-ipcMain.on('get-games', (event) => {
-    event.sender.send('games', games);
-});
+
 
 app.whenReady().then(() => {
     loadGamesFromFile();
