@@ -29,11 +29,11 @@ function createWindow() {
         width: 900,
         height: 700,
         webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
         }
     });
-
     mainWindow.loadFile('index.html');
 }
 
@@ -193,10 +193,6 @@ ipcMain.handle('edit-threshold', (event, idx, newThreshold) => {
         if (mainWindow && !mainWindow.isDestroyed())
             mainWindow.webContents.send('games', games);
     }
-});
-
-ipcRenderer.on('games', (event, games) => {
-    updateTable(games);
 });
 
 ipcMain.on('remove-game', (event, idx) => {

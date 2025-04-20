@@ -4,6 +4,17 @@
   <meta charset="UTF-8" />
   <title>Monitor cen gier</title>
   <link rel="stylesheet" href="style.css" />
+  <style>
+    #threshold-modal {
+      display:none; position:fixed; left:0; top:0; width:100vw; height:100vh;
+      background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:1000
+    }
+    #threshold-modal > div {
+      background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px #0008;
+      display: flex; flex-direction: column; gap: 8px; min-width: 240px;
+      align-items: stretch;
+    }
+  </style>
 </head>
 <body>
 <h1>Monitor cen gier</h1>
@@ -20,14 +31,27 @@
     <th>Keyshop (zł)</th>
     <th>Link</th>
     <th>Próg powiadomienia (zł)</th>
-    <th style="width:40px;"></th>
+    <th style="width:80px;"></th>
   </tr>
   </thead>
   <tbody></tbody>
 </table>
 
+<!-- MODAL DO EDYCJI PROGU -->
+<div id="threshold-modal">
+  <div>
+    <label>Nowy próg cenowy:
+      <input type="number" id="threshold-modal-input">
+    </label>
+    <div style="display:flex; gap:8px; margin-top:8px;">
+      <button id="threshold-modal-ok">OK</button>
+      <button id="threshold-modal-cancel">Anuluj</button>
+    </div>
+  </div>
+</div>
+
 <script>
-  const { ipcRenderer } = require('electron');
+  const ipcRenderer = window.electron.ipcRenderer;
 
   function updateTable(games) {
     const tbody = document.querySelector('#gamesTable tbody');
@@ -42,14 +66,10 @@
           <td>${official}</td>
           <td>${keyshop}</td>
           <td><a class="games-link" href="${game.url}" target="_blank">GG.deals</a></td>
-          <td>${threshold}</td>
+          <td id="threshold-${i}">${threshold}</td>
           <td>
-           <button data-index="${i}" class="edit-btn" title="Edytuj próg">
-           ✏️
-           </button>
-            <button data-index="${i}" class="remove-btn" title="Usuń">
-              🗑️
-            </button>
+           <button data-index="${i}" class="edit-btn" title="Edytuj próg">✏️</button>
+           <button data-index="${i}" class="remove-btn" title="Usuń">🗑️</button>
           </td>
         `;
       tbody.appendChild(row);
@@ -57,24 +77,23 @@
 
     // Obsługa kliknięcia usuń
     document.querySelectorAll('.remove-btn').forEach(btn => {
-      btn.onclick = function() {
+      btn.onclick = function () {
         const idx = parseInt(this.getAttribute('data-index'));
         ipcRenderer.send('remove-game', idx);
       };
     });
-  }
 
-  // Obsługa kliknięcia edytuj
-  document.querySelectorAll('.edit-btn').forEach(btn => {
-    btn.onclick = function() {
-      const idx = parseInt(this.getAttribute('data-index'));
-      const current = document.getElementById('threshold-' + idx).innerText;
-      const newVal = prompt("Podaj nowy próg cenowy (lub zostaw puste by wyłączyć):", current === '-' ? '' : current);
-      if (newVal !== null) {
-        ipcRenderer.invoke('edit-threshold', idx, newVal.trim());
-      }
-    };
-  });
+    // Obsługa kliknięcia edytuj
+    document.querySelectorAll('.edit-btn').forEach(btn => {
+      btn.onclick = function () {
+        editIdx = parseInt(this.getAttribute('data-index'));
+        const current = document.getElementById('threshold-' + editIdx).innerText;
+        document.getElementById('threshold-modal').style.display = 'flex';
+        document.getElementById('threshold-modal-input').value = (current === '-' ? '' : current);
+        document.getElementById('threshold-modal-input').focus();
+      };
+    });
+  }
 
   // Odbiór zaktualizowanej listy gier
   ipcRenderer.on('games', (event, games) => {
@@ -96,6 +115,21 @@
   // Załaduj gry przy starcie
   window.onload = function() {
     ipcRenderer.send('get-games');
+  };
+
+  // MODAL: obsługa edycji progu
+  let editIdx = null;
+  document.getElementById('threshold-modal-ok').onclick = function() {
+    const newVal = document.getElementById('threshold-modal-input').value.trim();
+    if (editIdx !== null) {
+      ipcRenderer.invoke('edit-threshold', editIdx, newVal);
+    }
+    document.getElementById('threshold-modal').style.display = 'none';
+    editIdx = null;
+  };
+  document.getElementById('threshold-modal-cancel').onclick = function() {
+    document.getElementById('threshold-modal').style.display = 'none';
+    editIdx = null;
   };
 </script>
 </body>
