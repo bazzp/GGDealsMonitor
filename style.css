@@ -23,7 +23,7 @@ th {
 tr:last-child td {
     border-bottom: none;
 }
-.remove-btn .edit-btn {
+.remove-btn {
     background: none;
     border: none;
     color: #c33;

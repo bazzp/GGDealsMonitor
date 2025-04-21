@@ -1,31 +1,13 @@
 const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
-const fs = require('fs');
 
 let mainWindow;
 let monitoring = false;
-const stateFile = path.join(app.getPath('userData'), 'games.json');
-let games = loadGamesFromFile(); // Załaduj gry z pliku na starcie
-function saveGamesToFile() {
-    fs.writeFileSync(stateFile, JSON.stringify(games, null, 2), 'utf-8');
-}
+let games = [];
 
 ipcMain.on('get-games', (event) => {
     event.sender.send('games', games);
 });
-
-function loadGamesFromFile() {
-    if (fs.existsSync(stateFile)) {
-        try {
-            const data = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-            if (Array.isArray(data)) {
-                games = data;
-                return true;
-            }
-        } catch (e) { }
-    }
-    return false;
-}
 
 function createWindow() {
     mainWindow = new BrowserWindow({
@@ -82,6 +64,7 @@ async function fetchGameData(url) {
 
         return { name, url, official, keyshop };
     } catch (e) {
+        
         return { name: 'Błąd pobierania', url, official: null, keyshop: null };
     }
 }
@@ -102,40 +85,8 @@ function notifyPriceChange(game, oldOfficial, newOfficial, oldKeyshop, newKeysho
     }
 }
 
-function notifyBelowThreshold(game, price, typ) {
-    new Notification({
-        title: 'Cena gry spadła poniżej progu!',
-        body: `${game.name} (${typ}) jest teraz za ${formatPrice(price)} (próg: ${formatPrice(game.threshold)})`
-    }).show();
-}
-
 function checkAndNotify(game, newOfficial, newKeyshop, oldOfficial, oldKeyshop) {
-    // Powiadomienie o każdej zmianie ceny (niezależnie od progu)
     notifyPriceChange(game, oldOfficial, newOfficial, oldKeyshop, newKeyshop);
-
-    // Powiadomienie o spadku poniżej progu (osobno dla official i keyshop)
-    if (game.threshold !== null && game.threshold !== undefined && game.threshold !== "") {
-        const threshold = Number(game.threshold);
-
-        // Official
-        if (
-            newOfficial !== undefined && newOfficial !== null &&
-            newOfficial <= threshold &&
-            (!game.notifiedBelowThresholdOfficial || game.notifiedBelowThresholdOfficial !== newOfficial)
-        ) {
-            notifyBelowThreshold(game, newOfficial, "Oficjalny sklep");
-            game.notifiedBelowThresholdOfficial = newOfficial;
-        }
-        // Keyshop
-        if (
-            newKeyshop !== undefined && newKeyshop !== null &&
-            newKeyshop <= threshold &&
-            (!game.notifiedBelowThresholdKeyshop || game.notifiedBelowThresholdKeyshop !== newKeyshop)
-        ) {
-            notifyBelowThreshold(game, newKeyshop, "Keyshop");
-            game.notifiedBelowThresholdKeyshop = newKeyshop;
-        }
-    }
 }
 
 async function monitorLoop() {
@@ -145,13 +96,16 @@ async function monitorLoop() {
             const oldKeyshop = game.keyshop;
             const data = await fetchGameData(game.url);
 
-            // Zaktualizuj ceny
-            game.official = data.official;
-            game.keyshop = data.keyshop;
+            // Zaktualizuj ceny TYLKO jeśli pobrano nowe (nie null/undefined)
+            if (data.official !== null && data.official !== undefined) {
+                game.official = data.official;
+            }
+            if (data.keyshop !== null && data.keyshop !== undefined) {
+                game.keyshop = data.keyshop;
+            }
 
-            checkAndNotify(game, data.official, data.keyshop, oldOfficial, oldKeyshop);
+            checkAndNotify(game, game.official, game.keyshop, oldOfficial, oldKeyshop);
         }
-        saveGamesToFile();
         if (mainWindow && !mainWindow.isDestroyed())
             mainWindow.webContents.send('games', games);
         if (games.length === 0) {
@@ -162,24 +116,19 @@ async function monitorLoop() {
     }
 }
 
-ipcMain.handle('add-game', async (event, url, threshold) => {
+ipcMain.handle('add-game', async (event, url) => {
     if (games.some(g => g.url === url)) return;
     const data = await fetchGameData(url);
     const game = {
         name: data.name,
         url: data.url,
         official: data.official,
-        keyshop: data.keyshop,
-        threshold: threshold ? Number(threshold) : null,
-        notifiedBelowThresholdOfficial: null,
-        notifiedBelowThresholdKeyshop: null
+        keyshop: data.keyshop
     };
     games.push(game);
 
-    // Powiadomienie natychmiast po dodaniu gry
     checkAndNotify(game, data.official, data.keyshop, undefined, undefined);
 
-    saveGamesToFile();
     if (!monitoring && games.length > 0) {
         monitoring = true;
         monitorLoop();
@@ -188,34 +137,16 @@ ipcMain.handle('add-game', async (event, url, threshold) => {
         mainWindow.webContents.send('games', games);
 });
 
-ipcMain.handle('edit-threshold', (event, idx, newThreshold) => {
-    if (idx >= 0 && idx < games.length) {
-        games[idx].threshold = newThreshold !== "" ? Number(newThreshold) : null;
-        games[idx].notified = false; // Reset powiadomienia o progu!
-        saveGamesToFile();
-        if (mainWindow && !mainWindow.isDestroyed())
-            mainWindow.webContents.send('games', games);
-    }
-});
-
 ipcMain.on('remove-game', (event, idx) => {
     if (idx >= 0 && idx < games.length) {
         games.splice(idx, 1);
-        saveGamesToFile();
         if (mainWindow && !mainWindow.isDestroyed())
             mainWindow.webContents.send('games', games);
     }
 });
 
-
-
 app.whenReady().then(() => {
-    loadGamesFromFile();
     createWindow();
-    if (games.length > 0) {
-        monitoring = true;
-        monitorLoop();
-    }
 });
 
 app.on('window-all-closed', () => {

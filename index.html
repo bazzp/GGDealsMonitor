@@ -4,23 +4,11 @@
   <meta charset="UTF-8" />
   <title>Monitor cen gier</title>
   <link rel="stylesheet" href="style.css" />
-  <style>
-    #threshold-modal {
-      display:none; position:fixed; left:0; top:0; width:100vw; height:100vh;
-      background:rgba(0,0,0,.5); justify-content:center; align-items:center; z-index:1000
-    }
-    #threshold-modal > div {
-      background:#fff; padding:20px; border-radius:8px; box-shadow:0 2px 8px #0008;
-      display: flex; flex-direction: column; gap: 8px; min-width: 240px;
-      align-items: stretch;
-    }
-  </style>
 </head>
 <body>
 <h1>Monitor cen gier</h1>
 <form class="add-form" id="addForm">
   <input type="text" id="urlInput" placeholder="Wklej link do gry z GG.deals, np. https://gg.deals/game/minecraft/" required>
-  <input type="number" id="thresholdInput" placeholder="Próg powiadomienia (zł)">
   <button type="submit">Dodaj</button>
 </form>
 <table id="gamesTable">
@@ -30,25 +18,11 @@
     <th>Oficjalny sklep (zł)</th>
     <th>Keyshop (zł)</th>
     <th>Link</th>
-    <th>Próg powiadomienia (zł)</th>
     <th style="width:80px;"></th>
   </tr>
   </thead>
   <tbody></tbody>
 </table>
-
-<!-- MODAL DO EDYCJI PROGU -->
-<div id="threshold-modal">
-  <div>
-    <label>Nowy próg cenowy:
-      <input type="number" id="threshold-modal-input">
-    </label>
-    <div style="display:flex; gap:8px; margin-top:8px;">
-      <button id="threshold-modal-ok">OK</button>
-      <button id="threshold-modal-cancel">Anuluj</button>
-    </div>
-  </div>
-</div>
 
 <script>
   const ipcRenderer = window.electron.ipcRenderer;
@@ -57,19 +31,16 @@
     const tbody = document.querySelector('#gamesTable tbody');
     tbody.innerHTML = '';
     games.forEach((game, i) => {
-      const official = (game.official !== null && game.official !== undefined) ? game.official : '-';
-      const keyshop = (game.keyshop !== null && game.keyshop !== undefined) ? game.keyshop : '-';
-      const threshold = (game.threshold !== null && game.threshold !== undefined && game.threshold !== "") ? game.threshold : '-';
+      const official = (game.official !== null && game.official !== undefined) ? game.official : '';
+      const keyshop = (game.keyshop !== null && game.keyshop !== undefined) ? game.keyshop : '';
       const row = document.createElement('tr');
       row.innerHTML = `
           <td>${game.name}</td>
           <td>${official}</td>
           <td>${keyshop}</td>
           <td><a class="games-link" href="${game.url}" target="_blank">GG.deals</a></td>
-          <td id="threshold-${i}">${threshold}</td>
           <td>
-           <button data-index="${i}" class="edit-btn" title="Edytuj próg">✏️</button>
-           <button data-index="${i}" class="remove-btn" title="Usuń">🗑️</button>
+           <button data-index="${i}" class="remove-btn" title="Usuń">&#128465;&#65039;</button>
           </td>
         `;
       tbody.appendChild(row);
@@ -80,17 +51,6 @@
       btn.onclick = function () {
         const idx = parseInt(this.getAttribute('data-index'));
         ipcRenderer.send('remove-game', idx);
-      };
-    });
-
-    // Obsługa kliknięcia edytuj
-    document.querySelectorAll('.edit-btn').forEach(btn => {
-      btn.onclick = function () {
-        editIdx = parseInt(this.getAttribute('data-index'));
-        const current = document.getElementById('threshold-' + editIdx).innerText;
-        document.getElementById('threshold-modal').style.display = 'flex';
-        document.getElementById('threshold-modal-input').value = (current === '-' ? '' : current);
-        document.getElementById('threshold-modal-input').focus();
       };
     });
   }
@@ -104,11 +64,9 @@
   document.getElementById('addForm').onsubmit = function(e) {
     e.preventDefault();
     const url = document.getElementById('urlInput').value.trim();
-    const threshold = document.getElementById('thresholdInput').value.trim();
     if (url) {
-      ipcRenderer.invoke('add-game', url, threshold);
+      ipcRenderer.invoke('add-game', url);
       document.getElementById('urlInput').value = '';
-      document.getElementById('thresholdInput').value = '';
     }
   };
 
@@ -117,35 +75,10 @@
     ipcRenderer.send('get-games');
   };
 
-  // Załaduj gry po starcie
-  window.addEventListener('DOMContentLoaded', () => {
-    window.electron.ipcRenderer.send('get-games');
-  });
-
-  // Opcjonalnie: po przywróceniu/skupieniu okna
+  // Dla bezpieczeństwa - przywrócenie listy po przywróceniu/skupieniu okna
   window.addEventListener('focus', () => {
     window.electron.ipcRenderer.send('get-games');
   });
-
-  // Odbierz gry i zaktualizuj UI
-  window.electron.ipcRenderer.on('games', (event, games) => {
-    renderGames(games); // Twoja funkcja do wyświetlania gier w tabeli
-  });
-
-  // MODAL: obsługa edycji progu
-  let editIdx = null;
-  document.getElementById('threshold-modal-ok').onclick = function() {
-    const newVal = document.getElementById('threshold-modal-input').value.trim();
-    if (editIdx !== null) {
-      ipcRenderer.invoke('edit-threshold', editIdx, newVal);
-    }
-    document.getElementById('threshold-modal').style.display = 'none';
-    editIdx = null;
-  };
-  document.getElementById('threshold-modal-cancel').onclick = function() {
-    document.getElementById('threshold-modal').style.display = 'none';
-    editIdx = null;
-  };
 </script>
 </body>
 </html>
